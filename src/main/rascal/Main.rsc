@@ -43,20 +43,19 @@ void printCloneReport(list[CloneClass] clones) {
     println("Total cloned lines: <totalClonedLines>");
     println();
     
-    // for (clone <- clones) {
-    //     println("-------------------------------------");
-    //     println("Clone Class #<clone.id>");
-    //     println("  Size: <clone.sizeLines> lines");
-    //     println("  Instances: <clone.sizeMembers>");
-    //     println("  Locations:");
+    for (clone <- clones) {
+        println("-------------------------------------");
+        println("Clone Class #<clone.id>");
+        println("  Size: <clone.sizeLines> lines");
+        println("  Instances: <clone.sizeMembers>");
+        println("  Locations:");
         
-    //     for (member <- clone.members) {
-    //         println("    - <member.location.path>");
-    //         println("      Lines <member.startLine>-<member.endLine>");
-    //         println(member.text);
-    //     }
-    //     println();
-    // }
+        for (member <- clone.members) {
+            println("    - <member.location.path>");
+            println("      Lines <member.startLine>-<member.endLine>");
+        }
+        println();
+    }
     
     println("=====================================");
 }
@@ -76,20 +75,100 @@ list[CloneClass] detectTypeIClone(loc project, int minLines) {
     for (hash <- codeBlocks) {
         list[CloneMember] members = codeBlocks[hash];
         if (size(members) > 1) {
-            // Calculate the size in lines (all members have same size for Type I)
-            int sizeLines = members[0].endLine - members[0].startLine + 1;
+            // Remove subsumption: filter out clone members that are contained within larger clones
+            members = filterSubsumedClones(members);
             
-            cloneClasses += cloneClass(
-                cloneId,
-                members,
-                sizeLines,
-                size(members)
-            );
-            cloneId += 1;
+            // Only keep if still has multiple members after filtering
+            if (size(members) > 1) {
+                // Calculate the size in lines (all members have same size for Type I)
+                int sizeLines = members[0].endLine - members[0].startLine + 1;
+                
+                cloneClasses += cloneClass(
+                    cloneId,
+                    members,
+                    sizeLines,
+                    size(members)
+                );
+                cloneId += 1;
+            }
         }
     }
     
+    // Remove overlapping clones: keep only the largest clones
+    cloneClasses = filterOverlappingClones(cloneClasses);
+    
     return cloneClasses;
+}
+
+list[CloneMember] filterSubsumedClones(list[CloneMember] members) {
+    // Group by file location
+    map[loc, list[CloneMember]] byFile = ();
+    for (m <- members) {
+        if (m.location in byFile) {
+            byFile[m.location] += m;
+        } else {
+            byFile[m.location] = [m];
+        }
+    }
+    
+    list[CloneMember] filtered = [];
+    for (file <- byFile) {
+        list[CloneMember] fileMembers = byFile[file];
+        // Sort by start line
+        fileMembers = sort(fileMembers, bool (CloneMember a, CloneMember b) { return a.startLine < b.startLine; });
+        
+        // Keep only non-overlapping clones in this file
+        for (m <- fileMembers) {
+            bool overlaps = false;
+            for (existing <- filtered, existing.location == file) {
+                if (m.startLine >= existing.startLine && m.endLine <= existing.endLine) {
+                    overlaps = true;
+                    break;
+                }
+            }
+            if (!overlaps) {
+                filtered += m;
+            }
+        }
+    }
+    
+    return filtered;
+}
+
+list[CloneClass] filterOverlappingClones(list[CloneClass] clones) {
+    // Sort by size (larger clones first)
+    clones = sort(clones, bool (CloneClass a, CloneClass b) { return a.sizeLines > b.sizeLines; });
+    
+    list[CloneClass] filtered = [];
+    set[tuple[loc, int, int]] usedRanges = {};
+    
+    for (clone <- clones) {
+        bool hasOverlap = false;
+        
+        // Check if any member overlaps with already used ranges
+        for (member <- clone.members) {
+            for (usedRange <- usedRanges) {
+                if (usedRange[0] == member.location) {
+                    // Check if ranges overlap
+                    if (!(member.endLine < usedRange[1] || member.startLine > usedRange[2])) {
+                        hasOverlap = true;
+                        break;
+                    }
+                }
+            }
+            if (hasOverlap) break;
+        }
+        
+        if (!hasOverlap) {
+            filtered += clone;
+            // Mark these ranges as used
+            for (member <- clone.members) {
+                usedRanges += {<member.location, member.startLine, member.endLine>};
+            }
+        }
+    }
+    
+    return filtered;
 }
 
 map[str, list[CloneMember]] extractCodeBlocks(loc project, int minLines) {
