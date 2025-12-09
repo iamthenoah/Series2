@@ -43,19 +43,19 @@ void printCloneReport(list[CloneClass] clones) {
     println("Total cloned lines: <totalClonedLines>");
     println();
     
-    for (clone <- clones) {
-        println("-------------------------------------");
-        println("Clone Class #<clone.id>");
-        println("  Size: <clone.sizeLines> lines");
-        println("  Instances: <clone.sizeMembers>");
-        println("  Locations:");
+    // for (clone <- clones) {
+    //     println("-------------------------------------");
+    //     println("Clone Class #<clone.id>");
+    //     println("  Size: <clone.sizeLines> lines");
+    //     println("  Instances: <clone.sizeMembers>");
+    //     println("  Locations:");
         
-        for (member <- clone.members) {
-            println("    - <member.location.path>");
-            println("      Lines <member.startLine>-<member.endLine>");
-        }
-        println();
-    }
+    //     for (member <- clone.members) {
+    //         println("    - <member.location.path>");
+    //         println("      Lines <member.startLine>-<member.endLine>");
+    //     }
+    //     println();
+    // }
     
     println("=====================================");
 }
@@ -189,7 +189,7 @@ map[str, list[CloneMember]] extractCodeBlocks(loc project, int minLines) {
                 }
             }
         } catch: {
-            // If AST parsing fails, fall back to line-based approach
+            // If AST parsing fails, skip
             println("Warning: Could not parse <file.path>, skipping...");
         }
     }
@@ -209,40 +209,41 @@ map[str, list[CloneMember]] extractFromDeclaration(Declaration d, loc file, int 
         return blocks;
     }
     
-    // Normalize lines
-    list[str] normalizedLines = [normalizeLine(line) | line <- lines];
+    // Tokenize each line
+    list[list[str]] tokenizedLines = [tokenizeLine(line) | line <- lines];
     
-    // Remove leading/trailing empty lines
-    while (!isEmpty(normalizedLines) && normalizedLines[0] == "") {
-        normalizedLines = tail(normalizedLines);
+    // Remove leading/trailing empty token lines
+    while (!isEmpty(tokenizedLines) && isEmpty(tokenizedLines[0])) {
+        tokenizedLines = tail(tokenizedLines);
     }
-    while (!isEmpty(normalizedLines) && normalizedLines[-1] == "") {
-        normalizedLines = prefix(normalizedLines);
+    while (!isEmpty(tokenizedLines) && isEmpty(tokenizedLines[-1])) {
+        tokenizedLines = prefix(tokenizedLines);
     }
     
     // Skip if too small after normalization
-    if (size(normalizedLines) < minLines) {
+    if (size(tokenizedLines) < minLines) {
         return blocks;
     }
     
     // Create sliding window of code blocks within this declaration
-    for (int i <- [0..size(normalizedLines) - minLines + 1]) {
-        list[str] block = slice(normalizedLines, i, minLines);
+    for (int i <- [0..size(tokenizedLines) - minLines + 1]) {
+        list[list[str]] block = slice(tokenizedLines, i, minLines);
         
         // Skip if block is all empty
-        if (all(line <- block, line == "")) {
+        if (all(tokenLine <- block, isEmpty(tokenLine))) {
             continue;
         }
         
-        // Create hash of the block
-        str blockHash = createHash(block);
+        // Create hash of the token block
+        str blockHash = createTokenHash(block);
         
         // Calculate actual line numbers in the original file
         int startLine = declLoc.begin.line + i;
         int endLine = startLine + minLines - 1;
         
-        // Get the actual text of the clone
-        str cloneText = intercalate("\n", block);
+        // Get the actual text of the clone (original lines, not tokens)
+        list[str] originalLines = slice(lines, i, minLines);
+        str cloneText = intercalate("\n", originalLines);
         
         CloneMember member = cloneMember(file, startLine, endLine, cloneText);
         
@@ -254,6 +255,166 @@ map[str, list[CloneMember]] extractFromDeclaration(Declaration d, loc file, int 
     }
     
     return blocks;
+}
+
+list[str] tokenizeLine(str line) {
+    // Remove comments
+    line = removeComments(line);
+    
+    // Trim whitespace
+    line = trim(line);
+    
+    if (line == "") {
+        return [];
+    }
+    
+    list[str] tokens = [];
+    str current = "";
+    
+    // Java keywords
+    set[str] keywords = {
+        "abstract", "assert", "boolean", "break", "byte", "case", "catch", "char",
+        "class", "const", "continue", "default", "do", "double", "else", "enum",
+        "extends", "final", "finally", "float", "for", "goto", "if", "implements",
+        "import", "instanceof", "int", "interface", "long", "native", "new", "package",
+        "private", "protected", "public", "return", "short", "static", "strictfp",
+        "super", "switch", "synchronized", "this", "throw", "throws", "transient",
+        "try", "void", "volatile", "while", "true", "false", "null"
+    };
+    
+    // Java operators and separators
+    set[str] operators = {
+        "+", "-", "*", "/", "%", "++", "--",
+        "==", "!=", "\>", "\<", "\>=", "\<=",
+        "&&", "||", "!",
+        "&", "|", "^", "~", "\<\<", "\>\>", "\>\>\>",
+        "=", "+=", "-=", "*=", "/=", "%=", "&=", "|=", "^=", "\<\<=", "\>\>=", "\>\>\>=",
+        "(", ")", "{", "}", "[", "]",
+        ";", ",", ".", ":", "?", "@"
+    };
+    
+    int i = 0;
+    while (i < size(line)) {
+        str ch = substring(line, i, i+1);
+        
+        // Check for two-character operators
+        if (i + 1 < size(line)) {
+            str twoChar = substring(line, i, i+2);
+            if (twoChar in operators) {
+                if (current != "") {
+                    tokens += classifyToken(current, keywords);
+                    current = "";
+                }
+                tokens += twoChar;
+                i += 2;
+                continue;
+            }
+        }
+        
+        // Check for single-character operators/separators
+        if (ch in operators) {
+            if (current != "") {
+                tokens += classifyToken(current, keywords);
+                current = "";
+            }
+            tokens += ch;
+            i += 1;
+        }
+        // Whitespace
+        else if (ch == " " || ch == "\t") {
+            if (current != "") {
+                tokens += classifyToken(current, keywords);
+                current = "";
+            }
+            i += 1;
+        }
+        // String literals
+        else if (ch == "\"") {
+            if (current != "") {
+                tokens += classifyToken(current, keywords);
+                current = "";
+            }
+            tokens += "STRING_LITERAL";
+            i += 1;
+            // Skip to end of string
+            while (i < size(line) && substring(line, i, i+1) != "\"") {
+                if (substring(line, i, i+1) == "\\") {
+                    i += 2; // Skip escaped character
+                } else {
+                    i += 1;
+                }
+            }
+            i += 1; // Skip closing quote
+        }
+        // Character literals
+        else if (ch == "\'") {
+            if (current != "") {
+                tokens += classifyToken(current, keywords);
+                current = "";
+            }
+            tokens += "CHAR_LITERAL";
+            i += 1;
+            // Skip to end of char
+            while (i < size(line) && substring(line, i, i+1) != "\'") {
+                if (substring(line, i, i+1) == "\\") {
+                    i += 2;
+                } else {
+                    i += 1;
+                }
+            }
+            i += 1;
+        }
+        // Regular characters (identifiers, numbers, etc.)
+        else {
+            current += ch;
+            i += 1;
+        }
+    }
+    
+    if (current != "") {
+        tokens += classifyToken(current, keywords);
+    }
+    
+    return tokens;
+}
+
+str classifyToken(str token, set[str] keywords) {
+    // Check if it's a keyword
+    if (token in keywords) {
+        return token;
+    }
+    
+    // Check if it's a number
+    if (/^[0-9]+$/ := token || /^[0-9]+\.[0-9]+$/ := token) {
+        return "NUMBER_LITERAL";
+    }
+    
+    // Check if it's a number with suffix (e.g., 123L, 1.5f)
+    if (/^[0-9]+[lLfFdD]$/ := token || /^[0-9]+\.[0-9]+[fFdD]$/ := token) {
+        return "NUMBER_LITERAL";
+    }
+    
+    // Otherwise it's an identifier
+    return "IDENTIFIER";
+}
+
+str removeComments(str line) {
+    // Remove single-line comments
+    if (/^(.*)\/\/.*$/ := line) {
+        return line[0..findFirst(line, "//")];
+    }
+    
+    // Basic multi-line comment removal (assumes no multi-line comments within a single line)
+    line = replaceAll(line, "/*", "");
+    line = replaceAll(line, "*/", "");
+    
+    return line;
+}
+
+str createTokenHash(list[list[str]] tokenLines) {
+    // Flatten the token list and create a hash
+    list[str] allTokens = [token | tokenLine <- tokenLines, token <- tokenLine];
+    return intercalate(" ", allTokens);
 }
 
 set[loc] findJavaFiles(loc project) {
@@ -268,32 +429,6 @@ set[loc] findJavaFiles(loc project) {
     }
     
     return files;
-}
-
-str normalizeLine(str line) {
-    // Remove leading/trailing whitespace
-    str trimmed = trim(line);
-    
-    // Remove single-line comments
-    if (startsWith(trimmed, "//")) {
-        return "";
-    }
-    
-    // Remove multi-line comment markers (basic approach)
-    trimmed = replaceAll(trimmed, "/*", "");
-    trimmed = replaceAll(trimmed, "*/", "");
-    
-    // Normalize whitespace (replace multiple spaces with single space)
-    trimmed = visit(trimmed) {
-        case /\s+/ => " "
-    };
-    
-    return trim(trimmed);
-}
-
-str createHash(list[str] lines) {
-    // Simple hash: concatenate all lines
-    return intercalate("\n", lines);
 }
 
 // Helper function for Rascal 2.x compatibility
