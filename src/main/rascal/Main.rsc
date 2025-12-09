@@ -53,6 +53,7 @@ void printCloneReport(list[CloneClass] clones) {
     //     for (member <- clone.members) {
     //         println("    - <member.location.path>");
     //         println("      Lines <member.startLine>-<member.endLine>");
+    //         println("      Text  <member.text>");
     //     }
     //     println();
     // }
@@ -173,11 +174,9 @@ list[CloneClass] filterOverlappingClones(list[CloneClass] clones) {
 
 map[str, list[CloneMember]] extractCodeBlocks(loc project, int minLines) {
     map[str, list[CloneMember]] blocks = ();
-    
-    // Find all Java files in the project
-    set[loc] javaFiles = findJavaFiles(project);
-    
-    for (file <- javaFiles) {
+    M3 model = createM3FromMavenProject(project);
+
+    for (file <- files(model)) {
         // Parse the file to get method/constructor bodies
         try {
             Declaration ast = createAstFromFile(file, true);
@@ -415,23 +414,4 @@ str createTokenHash(list[list[str]] tokenLines) {
     // Flatten the token list and create a hash
     list[str] allTokens = [token | tokenLine <- tokenLines, token <- tokenLine];
     return intercalate(" ", allTokens);
-}
-
-set[loc] findJavaFiles(loc project) {
-    set[loc] files = {};
-    
-    if (isDirectory(project)) {
-        for (entry <- project.ls) {
-            files += findJavaFiles(entry);
-        }
-    } else if (project.extension == "java") {
-        files += {project};
-    }
-    
-    return files;
-}
-
-// Helper function for Rascal 2.x compatibility
-public list[&T] slice(list[&T] lst, int begin, int len) {
-    return lst[begin..begin+len];
 }
