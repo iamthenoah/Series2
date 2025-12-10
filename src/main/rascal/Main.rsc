@@ -19,14 +19,14 @@ data CloneClass = cloneClass(
 );
 
 public int main(loc project) {
-    list[CloneClass] clones = detectTypeIClone(project);
-    printCloneReport(clones);
+    printCloneReport("Type I", detectTypeIClone(project));
+    printCloneReport("Type II", detectTypeIIClone(project));
     return 0;
 }
 
-void printCloneReport(list[CloneClass] clones) {
+void printCloneReport(str name, list[CloneClass] clones) {
     println("=====================================");
-    println("Type I Clone Detection Report");
+    println("<name> Clone Detection Report");
     println("=====================================");
     println("Total clone classes found: <size(clones)>");
     println();
@@ -43,31 +43,35 @@ void printCloneReport(list[CloneClass] clones) {
     println("Total cloned lines: <totalClonedLines>");
     println();
     
-    // for (clone <- clones) {
-    //     println("-------------------------------------");
-    //     println("Clone Class #<clone.id>");
-    //     println("  Size: <clone.sizeLines> lines");
-    //     println("  Instances: <clone.sizeMembers>");
-    //     println("  Locations:");
+    for (clone <- clones) {
+        println("-------------------------------------");
+        println("Clone Class #<clone.id>");
+        println("  Size: <clone.sizeLines> lines");
+        println("  Instances: <clone.sizeMembers>");
+        println("  Locations:");
         
-    //     for (member <- clone.members) {
-    //         println("    - <member.location.path>");
-    //         println("      Lines <member.startLine>-<member.endLine>");
-    //         println("      Text  <member.text>");
-    //     }
-    //     println();
-    // }
+        for (member <- clone.members) {
+            println("    - <member.location.path>");
+            println("      Lines <member.startLine>-<member.endLine>");
+            println("      Text  <member.text>");
+        }
+        println();
+    }
     
     println("=====================================");
 }
 
 list[CloneClass] detectTypeIClone(loc project) {
-    return detectTypeIClone(project, 6);
+    return detectTypeClone(project, 6, true);
 }
 
-list[CloneClass] detectTypeIClone(loc project, int minLines) {
+list[CloneClass] detectTypeIIClone(loc project) {
+    return detectTypeClone(project, 6, false);
+}
+
+list[CloneClass] detectTypeClone(loc project, int minLines, bool type1) {
     // Extract all code blocks from the project
-    map[str, list[CloneMember]] codeBlocks = extractCodeBlocks(project, minLines);
+    map[str, list[CloneMember]] codeBlocks = extractCodeBlocks(project, minLines, type1);
     
     // Filter blocks that appear more than once (clones)
     list[CloneClass] cloneClasses = [];
@@ -172,7 +176,7 @@ list[CloneClass] filterOverlappingClones(list[CloneClass] clones) {
     return filtered;
 }
 
-map[str, list[CloneMember]] extractCodeBlocks(loc project, int minLines) {
+map[str, list[CloneMember]] extractCodeBlocks(loc project, int minLines, bool type1) {
     map[str, list[CloneMember]] blocks = ();
     M3 model = createM3FromMavenProject(project);
 
@@ -184,7 +188,7 @@ map[str, list[CloneMember]] extractCodeBlocks(loc project, int minLines) {
             for (/Declaration d := ast) {
                 // Extract method and constructor bodies
                 if (d is method || d is constructor) {
-                    blocks = extractFromDeclaration(d, file, minLines, blocks);
+                    blocks = extractFromDeclaration(d, file, minLines, blocks, type1);
                 }
             }
         } catch: {
@@ -196,12 +200,12 @@ map[str, list[CloneMember]] extractCodeBlocks(loc project, int minLines) {
     return blocks;
 }
 
-map[str, list[CloneMember]] extractFromDeclaration(Declaration d, loc file, int minLines, map[str, list[CloneMember]] blocks) {
+map[str, list[CloneMember]] extractFromDeclaration(Declaration d, loc file, int minLines, map[str, list[CloneMember]] blocks, bool type1) {
     // Get the source location of the declaration
     loc declLoc = d.src;
     
     // Read only the lines of this declaration
-    list[str] lines = readFileLines(declLoc);
+    list[str] lines = normalizeLines(declLoc);
     
     // Skip if declaration is too small
     if (size(lines) < minLines) {
@@ -209,8 +213,13 @@ map[str, list[CloneMember]] extractFromDeclaration(Declaration d, loc file, int 
     }
     
     // Tokenize each line
-    list[list[str]] tokenizedLines = [tokenizeLine(line) | line <- lines];
-    
+    list[list[str]] tokenizedLines = [tokenizeLine(line, type1) | line <- lines];
+    // for (i <- [0 .. size(lines) - 1]) {
+    //     println("----");
+    //     println("line:      <lines[i]>");
+    //     println("tokenized: <tokenizedLines[i]>");
+    // }
+
     // Remove leading/trailing empty token lines
     while (!isEmpty(tokenizedLines) && isEmpty(tokenizedLines[0])) {
         tokenizedLines = tail(tokenizedLines);
@@ -234,7 +243,8 @@ map[str, list[CloneMember]] extractFromDeclaration(Declaration d, loc file, int 
         }
         
         // Create hash of the token block
-        str blockHash = createTokenHash(block);
+        str blockHash = intercalate(" ", [token | tokenLine <- block, token <- tokenLine]);
+        println(blockHash);
         
         // Calculate actual line numbers in the original file
         int startLine = declLoc.begin.line + i;
@@ -256,11 +266,46 @@ map[str, list[CloneMember]] extractFromDeclaration(Declaration d, loc file, int 
     return blocks;
 }
 
-list[str] tokenizeLine(str line) {
-    // Remove comments
-    line = removeComments(line);
-    
-    // Trim whitespace
+public list[str] normalizeLines(loc file) {
+    list[str] result = [];
+    bool inBlock = false;
+
+    for (str raw <- readFileLines(file)) {
+        str line = trim(raw);
+
+        if (inBlock) {
+            if (contains(line, "*/")) {
+                inBlock = false;
+            }
+            continue;
+        }
+        if (startsWith(line, "/*")) {
+            line = replaceAll(line, "/\\*|\\*/", ""); 
+            if (line == "") continue;
+
+            if (!contains(raw, "*/")) { 
+                inBlock = true;
+                continue;
+            }
+        }
+
+        if (/^(.*)\/\/.*$/ := line) {
+            line = line[0..findFirst(line, "//")];
+        }
+        line = trim(line); // Re-trim after removing inline comment
+
+        if (line == "" || startsWith(line, "//")) {
+            continue; // Skip lines that are now empty or were only single-line comments
+        }
+        
+        line = replaceAll(line, "\\s+", " ");
+        line = trim(line);
+        result += [line];
+    }
+    return result;
+}
+
+list[str] tokenizeLine(str line, bool type1) {
     line = trim(line);
     
     if (line == "") {
@@ -301,7 +346,7 @@ list[str] tokenizeLine(str line) {
             str twoChar = substring(line, i, i+2);
             if (twoChar in operators) {
                 if (current != "") {
-                    tokens += classifyToken(current, keywords);
+                    tokens += classifyToken(current, keywords, type1);
                     current = "";
                 }
                 tokens += twoChar;
@@ -313,7 +358,7 @@ list[str] tokenizeLine(str line) {
         // Check for single-character operators/separators
         if (ch in operators) {
             if (current != "") {
-                tokens += classifyToken(current, keywords);
+                tokens += classifyToken(current, keywords, type1);
                 current = "";
             }
             tokens += ch;
@@ -322,7 +367,7 @@ list[str] tokenizeLine(str line) {
         // Whitespace
         else if (ch == " " || ch == "\t") {
             if (current != "") {
-                tokens += classifyToken(current, keywords);
+                tokens += classifyToken(current, keywords, type1);
                 current = "";
             }
             i += 1;
@@ -330,7 +375,7 @@ list[str] tokenizeLine(str line) {
         // String literals
         else if (ch == "\"") {
             if (current != "") {
-                tokens += classifyToken(current, keywords);
+                tokens += classifyToken(current, keywords, type1);
                 current = "";
             }
             tokens += "STRING_LITERAL";
@@ -348,7 +393,7 @@ list[str] tokenizeLine(str line) {
         // Character literals
         else if (ch == "\'") {
             if (current != "") {
-                tokens += classifyToken(current, keywords);
+                tokens += classifyToken(current, keywords, type1);
                 current = "";
             }
             tokens += "CHAR_LITERAL";
@@ -371,47 +416,23 @@ list[str] tokenizeLine(str line) {
     }
     
     if (current != "") {
-        tokens += classifyToken(current, keywords);
+        tokens += classifyToken(current, keywords, type1);
     }
     
     return tokens;
 }
 
-str classifyToken(str token, set[str] keywords) {
+str classifyToken(str token, set[str] keywords, bool type1) {
     // Check if it's a keyword
     if (token in keywords) {
         return token;
     }
     
     // Check if it's a number
-    if (/^[0-9]+$/ := token || /^[0-9]+\.[0-9]+$/ := token) {
-        return "NUMBER_LITERAL";
-    }
-    
-    // Check if it's a number with suffix (e.g., 123L, 1.5f)
-    if (/^[0-9]+[lLfFdD]$/ := token || /^[0-9]+\.[0-9]+[fFdD]$/ := token) {
-        return "NUMBER_LITERAL";
+    if (/^[0-9]+$/ := token || /^[0-9]+\.[0-9]+$/ := token || /^[0-9]+[lLfFdD]$/ := token || /^[0-9]+\.[0-9]+[fFdD]$/ := token) {
+        return "NUMBER_LITERAL<type1 ? "(<token>)" : "">";
     }
     
     // Otherwise it's an identifier
-    return "IDENTIFIER";
-}
-
-str removeComments(str line) {
-    // Remove single-line comments
-    if (/^(.*)\/\/.*$/ := line) {
-        return line[0..findFirst(line, "//")];
-    }
-    
-    // Basic multi-line comment removal (assumes no multi-line comments within a single line)
-    line = replaceAll(line, "/*", "");
-    line = replaceAll(line, "*/", "");
-    
-    return line;
-}
-
-str createTokenHash(list[list[str]] tokenLines) {
-    // Flatten the token list and create a hash
-    list[str] allTokens = [token | tokenLine <- tokenLines, token <- tokenLine];
-    return intercalate(" ", allTokens);
+    return "IDENTIFIER<type1 ? "(<token>)" : "">";
 }
