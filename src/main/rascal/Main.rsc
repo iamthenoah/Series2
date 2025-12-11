@@ -9,7 +9,7 @@ import util::Math;
 import lang::java::m3::Core;
 import lang::java::m3::AST;
 
-data CloneMember = cloneMember(loc location, int startLine, int endLine, str text);
+data CloneMember = cloneMember(loc location, int startLine, int endLine, str text, list[str] literals);
 
 data CloneClass = cloneClass(
     int id,
@@ -80,9 +80,6 @@ list[CloneClass] detectTypeClone(loc project, int minLines, bool type1) {
     for (hash <- codeBlocks) {
         list[CloneMember] members = codeBlocks[hash];
         if (size(members) > 1) {
-            // Remove subsumption: filter out clone members that are contained within larger clones
-            members = filterSubsumedClones(members);
-            
             // Only keep if still has multiple members after filtering
             if (size(members) > 1) {
                 // Calculate the size in lines (all members have same size for Type I)
@@ -99,81 +96,7 @@ list[CloneClass] detectTypeClone(loc project, int minLines, bool type1) {
         }
     }
     
-    // Remove overlapping clones: keep only the largest clones
-    cloneClasses = filterOverlappingClones(cloneClasses);
-    
     return cloneClasses;
-}
-
-list[CloneMember] filterSubsumedClones(list[CloneMember] members) {
-    // Group by file location
-    map[loc, list[CloneMember]] byFile = ();
-    for (m <- members) {
-        if (m.location in byFile) {
-            byFile[m.location] += m;
-        } else {
-            byFile[m.location] = [m];
-        }
-    }
-    
-    list[CloneMember] filtered = [];
-    for (file <- byFile) {
-        list[CloneMember] fileMembers = byFile[file];
-        // Sort by start line
-        fileMembers = sort(fileMembers, bool (CloneMember a, CloneMember b) { return a.startLine < b.startLine; });
-        
-        // Keep only non-overlapping clones in this file
-        for (m <- fileMembers) {
-            bool overlaps = false;
-            for (existing <- filtered, existing.location == file) {
-                if (m.startLine >= existing.startLine && m.endLine <= existing.endLine) {
-                    overlaps = true;
-                    break;
-                }
-            }
-            if (!overlaps) {
-                filtered += m;
-            }
-        }
-    }
-    
-    return filtered;
-}
-
-list[CloneClass] filterOverlappingClones(list[CloneClass] clones) {
-    // Sort by size (larger clones first)
-    clones = sort(clones, bool (CloneClass a, CloneClass b) { return a.sizeLines > b.sizeLines; });
-    
-    list[CloneClass] filtered = [];
-    set[tuple[loc, int, int]] usedRanges = {};
-    
-    for (clone <- clones) {
-        bool hasOverlap = false;
-        
-        // Check if any member overlaps with already used ranges
-        for (member <- clone.members) {
-            for (usedRange <- usedRanges) {
-                if (usedRange[0] == member.location) {
-                    // Check if ranges overlap
-                    if (!(member.endLine < usedRange[1] || member.startLine > usedRange[2])) {
-                        hasOverlap = true;
-                        break;
-                    }
-                }
-            }
-            if (hasOverlap) break;
-        }
-        
-        if (!hasOverlap) {
-            filtered += clone;
-            // Mark these ranges as used
-            for (member <- clone.members) {
-                usedRanges += {<member.location, member.startLine, member.endLine>};
-            }
-        }
-    }
-    
-    return filtered;
 }
 
 map[str, list[CloneMember]] extractCodeBlocks(loc project, int minLines, bool type1) {
@@ -214,11 +137,6 @@ map[str, list[CloneMember]] extractFromDeclaration(Declaration d, loc file, int 
     
     // Tokenize each line
     list[list[str]] tokenizedLines = [tokenizeLine(line, type1) | line <- lines];
-    // for (i <- [0 .. size(lines) - 1]) {
-    //     println("----");
-    //     println("line:      <lines[i]>");
-    //     println("tokenized: <tokenizedLines[i]>");
-    // }
 
     // Remove leading/trailing empty token lines
     while (!isEmpty(tokenizedLines) && isEmpty(tokenizedLines[0])) {
@@ -244,7 +162,6 @@ map[str, list[CloneMember]] extractFromDeclaration(Declaration d, loc file, int 
         
         // Create hash of the token block
         str blockHash = intercalate(" ", [token | tokenLine <- block, token <- tokenLine]);
-        println(blockHash);
         
         // Calculate actual line numbers in the original file
         int startLine = declLoc.begin.line + i;
@@ -253,8 +170,9 @@ map[str, list[CloneMember]] extractFromDeclaration(Declaration d, loc file, int 
         // Get the actual text of the clone (original lines, not tokens)
         list[str] originalLines = slice(lines, i, minLines);
         str cloneText = intercalate("\n", originalLines);
-        
-        CloneMember member = cloneMember(file, startLine, endLine, cloneText);
+        list[str] literals = [ v | b <- block, v <- extractLiteralValues(b) ];
+
+        CloneMember member = cloneMember(file, startLine, endLine, cloneText, literals);
         
         if (blockHash in blocks) {
             blocks[blockHash] += member;
@@ -264,6 +182,24 @@ map[str, list[CloneMember]] extractFromDeclaration(Declaration d, loc file, int 
     }
     
     return blocks;
+}
+
+public list[str] extractLiteralValues(list[str] tokens) {
+    list[str] out = [];
+
+    for (t <- tokens) {
+        // Match NAME(value)
+        if (/^([A-Z_]+)\((.*)\)$/ := t) {
+            // extract the part inside parentheses
+            int open = findFirst(t, "(");
+            int close = findLast(t, ")");
+            if (open >= 0 && close > open) {
+                out += substring(t, open + 1, close);
+            }
+        }
+    }
+
+    return out;
 }
 
 public list[str] normalizeLines(loc file) {
@@ -378,7 +314,7 @@ list[str] tokenizeLine(str line, bool type1) {
                 tokens += classifyToken(current, keywords, type1);
                 current = "";
             }
-            tokens += "STRING_LITERAL";
+            tokens += "STRING_LITERAL<(ch)>";
             i += 1;
             // Skip to end of string
             while (i < size(line) && substring(line, i, i+1) != "\"") {
@@ -396,7 +332,7 @@ list[str] tokenizeLine(str line, bool type1) {
                 tokens += classifyToken(current, keywords, type1);
                 current = "";
             }
-            tokens += "CHAR_LITERAL";
+            tokens += "CHAR_LITERAL<(ch)>";
             i += 1;
             // Skip to end of char
             while (i < size(line) && substring(line, i, i+1) != "\'") {
