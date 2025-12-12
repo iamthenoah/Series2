@@ -28,10 +28,11 @@ void exportCloneDataAsJson(loc project, str name, list[CloneClass] raw) {
 /**
  * Prints a detailed clone detection report with number of clones, lines, and code snippets.
  * 
- * @param name     The clone type to display (e.g., "Type I" or "Type II").
- * @param clones   The list of clone classes to print in the report.
+ * @param name        The clone type to display (e.g., "Type I" or "Type II").
+ * @param clones      The list of clone classes to print in the report.
+ * @param totalLines  The total number of lines processed in the project.
  */
-void printCloneReport(str name, list[CloneClass] clones) {
+void printCloneReport(str name, list[CloneClass] clones, int totalLines) {
     println("=====================================");
     println("<name> Clone Detection Report");
     println("=====================================");
@@ -44,9 +45,12 @@ void printCloneReport(str name, list[CloneClass] clones) {
     }
     int totalCloneInstances = (0 | it + size(cc.members) | cc <- clones);
     int totalClonedLines = (0 | it + (cc.sizeLines * size(cc.members)) | cc <- clones);
-    
+    real duplicationPercent = totalLines > 0.0 ? (totalClonedLines * 100.0) / totalLines : 0.0;
+
     println("Total clone instances: <totalCloneInstances>");
     println("Total cloned lines: <totalClonedLines>");
+    println("Total lines processed: <totalLines>");
+    println("Clone line duplication: <duplicationPercent>%");
     println();
     
     for (clone <- clones) {
@@ -54,7 +58,7 @@ void printCloneReport(str name, list[CloneClass] clones) {
         println("  Size: <clone.sizeLines> lines");
         println("  Instances: <size(clone.members)>");
         println("  Locations:");
-        
+
         for (member <- clone.members) {
             println("    - <member.location.path>");
             println("      Lines <member.startLine>-<member.endLine>");

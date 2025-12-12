@@ -20,13 +20,15 @@ import Report;
  * @return         Status code (0 = success).
  */
 public int main(loc project) {
-    list[CloneClass] typeI = detectTypeIClone(project);
-    printCloneReport("Type I", typeI);
-    exportCloneDataAsJson(project, "type_1", typeI);
+    <type1, t1TotalLines> = detectTypeIClone(project);
+    printCloneReport("Type I", type1, t1TotalLines);
+    exportCloneDataAsJson(project, "type_1", type1);
 
-    list[CloneClass] typeII = detectTypeIIClone(project);
-    printCloneReport("Type II", typeII);
-    exportCloneDataAsJson(project, "type_2", typeII);
-
+    <clones, t2TotalLines> = detectTypeIIClone(project);
+    // DISCLAIMER: There seams to be a rascal type system issue here that gives an unsolvable type error.
+    // see CloneDetection::filterTypeIIClones for more details.
+    list[CloneClass] type2 = filterTypeIIClones(clones);
+    printCloneReport("Type II", type2, t2TotalLines);
+    exportCloneDataAsJson(project, "type_2", type2);
     return 0;
 }
