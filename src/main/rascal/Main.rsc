@@ -1,6 +1,7 @@
 module Main
 
 import IO;
+import lang::json::IO;
 import List;
 import Set;
 import Map;
@@ -19,9 +20,21 @@ data CloneClass = cloneClass(
 );
 
 public int main(loc project) {
-    printCloneReport("Type I", detectTypeIClone(project));
-    printCloneReport("Type II", detectTypeIIClone(project));
+    list[CloneClass] typeI = detectTypeIClone(project);
+    list[CloneClass] typeII = detectTypeIIClone(project);
+
+    printCloneReport("Type I", typeI);
+    printCloneReport("Type II", typeII);
+    exportCloneDataAsJson(project, "type_1", typeI);
+    exportCloneDataAsJson(project, "type_2", typeII);
+
     return 0;
+}
+
+void exportCloneDataAsJson(loc project, str name, list[CloneClass] raw) {
+    loc outFile = project + "/<name>_clones.json";
+    writeJSON(outFile, raw, indent=2);
+    println("Exported clone data to <outFile>");
 }
 
 void printCloneReport(str name, list[CloneClass] clones) {
@@ -43,21 +56,21 @@ void printCloneReport(str name, list[CloneClass] clones) {
     println("Total cloned lines: <totalClonedLines>");
     println();
     
-    // for (clone <- clones) {
-    //     println("-------------------------------------");
-    //     println("Clone Class #<clone.id>");
-    //     println("  Size: <clone.sizeLines> lines");
-    //     println("  Instances: <clone.sizeMembers>");
-    //     println("  Locations:");
+    for (clone <- clones) {
+        println("-------------------------------------");
+        println("Clone Class #<clone.id>");
+        println("  Size: <clone.sizeLines> lines");
+        println("  Instances: <clone.sizeMembers>");
+        println("  Locations:");
         
-    //     for (member <- clone.members) {
-    //         println("    - <member.location.path>");
-    //         println("      Lines <member.startLine>-<member.endLine>");
-    //         println("      Text");
-    //         println("<member.text>");
-    //     }
-    //     println();
-    // }
+        for (member <- clone.members) {
+            println("    - <member.location.path>");
+            println("      Lines <member.startLine>-<member.endLine>");
+            println("      Text");
+            println("<member.text>");
+        }
+        println();
+    }
     
     println("=====================================");
 }
@@ -127,7 +140,47 @@ list[CloneClass] detectTypeClone(loc project, int minLines, bool type1) {
         }
     }
     
-    return cloneClasses;
+    return filterOverlappingClones(cloneClasses);
+}
+
+list[CloneClass] filterOverlappingClones(list[CloneClass] clones) {
+    // Sort by size (larger clones first)
+    clones = sort(clones, bool (CloneClass a, CloneClass b) {
+        return a.sizeLines > b.sizeLines;
+    });
+
+    list[CloneClass] filtered = [];
+    set[tuple[loc, int, int]] usedRanges = {};
+
+    for (clone <- clones) {
+        bool hasOverlap = false;
+
+        // Check if any member overlaps with already used ranges
+        for (member <- clone.members) {
+            for (usedRange <- usedRanges) {
+                if (usedRange[0] == member.location) {
+                    // Check if ranges overlap
+                    if (!(member.endLine < usedRange[1] ||
+                          member.startLine > usedRange[2])) {
+                        hasOverlap = true;
+                        break;
+                    }
+                }
+            }
+            if (hasOverlap) break;
+        }
+
+        if (!hasOverlap) {
+            filtered += clone;
+
+            // Mark these ranges as used
+            for (member <- clone.members) {
+                usedRanges += { <member.location, member.startLine, member.endLine> };
+            }
+        }
+    }
+
+    return filtered;
 }
 
 map[str, list[CloneMember]] extractCodeBlocks(loc project, int minLines, bool type1) {
