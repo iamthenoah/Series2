@@ -43,20 +43,21 @@ void printCloneReport(str name, list[CloneClass] clones) {
     println("Total cloned lines: <totalClonedLines>");
     println();
     
-    for (clone <- clones) {
-        println("-------------------------------------");
-        println("Clone Class #<clone.id>");
-        println("  Size: <clone.sizeLines> lines");
-        println("  Instances: <clone.sizeMembers>");
-        println("  Locations:");
+    // for (clone <- clones) {
+    //     println("-------------------------------------");
+    //     println("Clone Class #<clone.id>");
+    //     println("  Size: <clone.sizeLines> lines");
+    //     println("  Instances: <clone.sizeMembers>");
+    //     println("  Locations:");
         
-        for (member <- clone.members) {
-            println("    - <member.location.path>");
-            println("      Lines <member.startLine>-<member.endLine>");
-            println("      Text  <member.text>");
-        }
-        println();
-    }
+    //     for (member <- clone.members) {
+    //         println("    - <member.location.path>");
+    //         println("      Lines <member.startLine>-<member.endLine>");
+    //         println("      Text");
+    //         println("<member.text>");
+    //     }
+    //     println();
+    // }
     
     println("=====================================");
 }
@@ -66,7 +67,37 @@ list[CloneClass] detectTypeIClone(loc project) {
 }
 
 list[CloneClass] detectTypeIIClone(loc project) {
-    return detectTypeClone(project, 6, false);
+    list[CloneClass] classes = detectTypeClone(project, 6, false);
+
+    list[CloneClass] result = [];
+
+    for (cloneClass(id, members, sizeLines, sizeMembers) <- classes) {
+        set[str] seenTexts = {};
+        list[CloneMember] unique = [];
+
+        for (m <- members) {
+            if (m.text notin seenTexts) {
+                seenTexts += { m.text };
+                unique += [m];
+            }
+        }
+
+        if (size(unique) <= 1) {
+            continue;
+        }
+        
+        // keep class even if unique has only one, per your new instruction
+        result += [
+            cloneClass(
+                id,
+                unique,
+                sizeLines,
+                size(unique)
+            )
+        ];
+    }
+
+    return result;
 }
 
 list[CloneClass] detectTypeClone(loc project, int minLines, bool type1) {
