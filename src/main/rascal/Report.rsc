@@ -31,10 +31,12 @@ void exportCloneDataAsJson(loc project, str name, list[CloneClass] raw) {
  * @param name        The clone type to display (e.g., "Type I" or "Type II").
  * @param clones      The list of clone classes to print in the report.
  * @param totalLines  The total number of lines processed in the project.
+ * @param duration    The total time taken for the detection in milliseconds.
  */
-void printCloneReport(str name, list[CloneClass] clones, int totalLines) {
+void printCloneReport(str name, list[CloneClass] clones, int totalLines, int duration) {
     println("=====================================");
     println("<name> Clone Detection Report");
+    println("Completed in (<duration / 1000.0>s).");
     println("=====================================");
     println("Total clone classes found: <size(clones)>");
     println();
