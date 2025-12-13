@@ -53,19 +53,33 @@ void printCloneReport(str name, list[CloneClass] clones, int totalLines) {
     println("Clone line duplication: <duplicationPercent>%");
     println();
     
-    for (clone <- clones) {
-        println("-------------------------------------");
-        println("  Size: <clone.sizeLines> lines");
-        println("  Instances: <size(clone.members)>");
-        println("  Locations:");
-
-        for (member <- clone.members) {
-            println("    - <member.location.path>");
-            println("      Lines <member.startLine>-<member.endLine>");
-            println("      Text");
-            println("<member.text>");
-        }
-        println();
+    if (isEmpty(clones)) {
+        println("No clones detected.");
+        return;
     }
+    CloneClass largestClone = clones[0];
+
+    for (clone <- clones) {
+        if (size(clone.members) > size(largestClone.members)) {
+            largestClone = clone;
+        }
+    }
+    
+    println("-------------------------------------");
+    println("  Largest Clone Class:");
+    println("  Size: <size(largestClone.members)> members");
+    println("  Instances: <size(largestClone.members)>");
+    println("  Total lines: <size(largestClone.members) * largestClone.sizeLines>");
+
+    println("  Code Snippet:");
+    println("---");
+    println("<largestClone.members[0].text>");
+    println("---");
+    println("  Locations:");
+    
+    for (member <- largestClone.members) {
+        println("    - <member.location> from lines <member.startLine> to <member.endLine>");
+    }
+    println();
     println("=====================================");
 }
