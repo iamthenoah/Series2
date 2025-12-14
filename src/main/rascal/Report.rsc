@@ -10,7 +10,7 @@ import lang::json::IO;
 import lang::java::m3::Core;
 import lang::java::m3::AST;
 
-import CloneDetection;
+import DataTypes;
 
 /**
  * Exports a list of clone classes to a JSON file in the project root.

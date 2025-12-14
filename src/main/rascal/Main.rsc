@@ -11,8 +11,10 @@ import lang::json::IO;
 import lang::java::m3::Core;
 import lang::java::m3::AST;
 
-import CloneDetection;
+import CloneDetectionToken;
+import CloneDetectionAST;
 import Report;
+import DataTypes;
 
 /** 
  * Entry point for clone detection. Detects Type I and Type II clones, prints reports, and exports JSON.
@@ -20,13 +22,13 @@ import Report;
  * @param project  The location of the root folder of the project to analyze.
  * @return         Status code (0 = success).
  */
-public int main(loc project) {
+public int main(loc project, bool astBased) {
     println("Starting clone detection...");
     println();
     
     // Type I detection with timing
     int type1Start = realTime();
-    <type1, t1TotalLines> = detectTypeIClone(project);
+    <type1, t1TotalLines> = astBased ? CloneDetectionAST::detectTypeIClone(project) : CloneDetectionToken::detectTypeIClone(project);
     int type1Duration = realTime() - type1Start;
     printCloneReport("Type I", type1, t1TotalLines, type1Duration);
     exportCloneDataAsJson(project, "type_1", type1);
@@ -34,7 +36,7 @@ public int main(loc project) {
     
     // Type II detection with timing
     int type2Start = realTime();
-    <clones, t2TotalLines> = detectTypeIIClone(project);
+    <clones, t2TotalLines> = astBased ? CloneDetectionAST::detectTypeIIClone(project) : CloneDetectionToken::detectTypeIIClone(project);
     list[CloneClass] type2 = filterTypeIIClones(clones);
     int type2Duration = realTime() - type2Start;
     printCloneReport("Type II", type2, t2TotalLines, type2Duration);

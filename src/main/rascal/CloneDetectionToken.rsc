@@ -1,4 +1,4 @@
-module CloneDetection
+module CloneDetectionToken
 
 import IO;
 import List;
@@ -10,25 +10,27 @@ import lang::json::IO;
 import lang::java::m3::Core;
 import lang::java::m3::AST;
 
-import CodeTokenization;
+import DataTypes;
 
-/**
- * Data structure representing a single clone member in the codebase.
- * 
- * @param location   The file location of the clone member.
- * @param startLine  The starting line number of the clone member.
- * @param endLine    The ending line number of the clone member.
- * @param text       The actual text content of the clone member.
- */
-data CloneMember = cloneMember(loc location, int startLine, int endLine, str text);
+set[str] keywords = {
+    "abstract", "assert", "boolean", "break", "byte", "case", "catch", "char",
+    "class", "const", "continue", "default", "do", "double", "else", "enum",
+    "extends", "final", "finally", "float", "for", "goto", "if", "implements",
+    "import", "instanceof", "int", "interface", "long", "native", "new", "package",
+    "private", "protected", "public", "return", "short", "static", "strictfp",
+    "super", "switch", "synchronized", "this", "throw", "throws", "transient",
+    "try", "void", "volatile", "while", "true", "false", "null"
+};
 
-/**
- * Data structure representing a class of clones.
- * 
- * @param members     The list of clone members in this class.
- * @param sizeLines   The number of lines in each clone member.
- */
-data CloneClass = cloneClass(list[CloneMember] members, int sizeLines);
+set[str] operators = {
+    "+", "-", "*", "/", "%", "++", "--",
+    "==", "!=", "\>", "\<", "\>=", "\<=",
+    "&&", "||", "!",
+    "&", "|", "^", "~", "\<\<", "\>\>", "\>\>\>",
+    "=", "+=", "-=", "*=", "/=", "%=", "&=", "|=", "^=", "\<\<=", "\>\>=", "\>\>\>=",
+    "(", ")", "{", "}", "[", "]",
+    ";", ",", ".", ":", "?", "@"
+};
 
 /**
  * Detects Type I clones in the project using minimum line threshold.
@@ -52,29 +54,6 @@ tuple[list[CloneClass], int] detectTypeIIClone(loc project) {
 
 /**
  * DISCLAIMER: An an ideal scenario, this method should be merged into the method above but rascal does not like it:
- tuple[list[CloneClass], int] detectTypeIIClone(loc project) {
-    <classes, totalLines> = detectTypeClone(project, 6, false); // throws "Expected set[loc] (M3), but got list[CloneClass]"
-
-    println("<totalLines> total lines processed for Type II clone detection.");
-    list[CloneClass] result = [];
-
-    for (cloneClass(members, sizeLines) <- classes) {
-        set[str] seenTexts = {};
-        list[CloneMember] unique = [];
-
-        for (m <- members) {
-            if (m.text notin seenTexts) {
-                seenTexts += { m.text };
-                unique += [m];
-            }
-        }
-        if (size(unique) <= 1) {
-            continue;
-        }
-        result += [cloneClass(unique, sizeLines)];
-    }
-    return <result, totalLines>;
- }
  * Filters out duplicate clone members with identical text within each clone class.
  * 
  * @param classes  The list of clone classes to filter.
@@ -241,3 +220,152 @@ map[str, list[CloneMember]] extractFromDeclaration(Declaration d, loc file, int 
     return blocks;
 }
 
+/**
+ * Normalizes lines from a source file or declaration by removing comments, trimming, and collapsing whitespace.
+ * 
+ * @param dec  The file or declaration location to normalize.
+ * @return     List of normalized lines as strings.
+ */ 
+public list[str] normalizeLines(loc dec) {
+    list[str] result = [];
+    bool inBlock = false;
+
+    for (str raw <- readFileLines(dec)) {
+        str line = trim(raw);
+
+        if (inBlock) {
+            if (contains(line, "*/")) {
+                inBlock = false;
+            }
+            continue;
+        }
+        if (startsWith(line, "/*")) {
+            line = replaceAll(line, "/\\*|\\*/", ""); 
+            if (line == "") continue;
+
+            if (!contains(raw, "*/")) { 
+                inBlock = true;
+                continue;
+            }
+        }
+        if (/^(.*)\/\/.*$/ := line) {
+            line = line[0..findFirst(line, "//")];
+        }
+        line = trim(line); 
+
+        if (line == "" || startsWith(line, "//")) {
+            continue; 
+        }
+        line = replaceAll(line, "\\s+", " ");
+        line = trim(line);
+        result += [line];
+    }
+    return result;
+}
+
+/**
+ * Tokenizes a single line of code into keywords, identifiers, literals, and operators.
+ * 
+ * @param line              The line of code to tokenize.
+ * @param withTypeLiterals  True if detecting Type I clones, false for Type II.
+ * @return                  List of tokens extracted from the line.
+ */
+list[str] tokenizeLine(str line, bool withTypeLiterals) {
+    line = trim(line);
+    
+    if (line == "") {
+        return [];
+    }
+    list[str] tokens = [];
+    str current = "";
+    
+    int i = 0;
+    while (i < size(line)) {
+        str ch = substring(line, i, i+1);
+        
+        if (i + 1 < size(line)) {
+            str twoChar = substring(line, i, i+2);
+
+            if (twoChar in operators) {
+                if (current != "") {
+                    tokens += classifyToken(current, withTypeLiterals);
+                    current = "";
+                }
+                tokens += twoChar;
+                i += 2;
+                continue;
+            }
+        }
+        if (ch in operators) {
+            if (current != "") {
+                tokens += classifyToken(current, withTypeLiterals);
+                current = "";
+            }
+            tokens += ch;
+            i += 1;
+        } else if (ch == " " || ch == "\t") {
+            if (current != "") {
+                tokens += classifyToken(current, withTypeLiterals);
+                current = "";
+            }
+            i += 1;
+        } else if (ch == "\"") {
+            if (current != "") {
+                tokens += classifyToken(current, withTypeLiterals);
+                current = "";
+            }
+            tokens += "STRING_LITERAL<(ch)>";
+            i += 1;
+            
+            while (i < size(line) && substring(line, i, i+1) != "\"") {
+                if (substring(line, i, i+1) == "\\") {
+                    i += 2; 
+                } else {
+                    i += 1;
+                }
+            }
+            i += 1; 
+        } else if (ch == "\'") {
+            if (current != "") {
+                tokens += classifyToken(current, withTypeLiterals);
+                current = "";
+            }
+            tokens += "CHAR_LITERAL<(ch)>";
+            i += 1;
+            
+            while (i < size(line) && substring(line, i, i+1) != "\'") {
+                if (substring(line, i, i+1) == "\\") {
+                    i += 2;
+                } else {
+                    i += 1;
+                }
+            }
+            i += 1;
+        } else {
+            current += ch;
+            i += 1;
+        }
+    }
+    if (current != "") {
+        tokens += classifyToken(current, withTypeLiterals);
+    }
+    return tokens;
+}
+
+/**
+ * Classifies a single token as a keyword, number literal, or identifier (optionally including the literal value for Type I clones).
+ * 
+ * @param token             The string token to classify.
+ * @param keywords          Set of keywords for the language.
+ * @param withTypeLiterals  True if detecting Type I clones, false for Type II.
+ * @return                  The classified token string.
+ */
+str classifyToken(str token, bool withTypeLiterals) {
+    if (token in keywords) { // TODO - maybe use AST keyword tokens
+        return token;
+    }
+    if (/^[0-9]+$/ := token || /^[0-9]+\.[0-9]+$/ := token || /^[0-9]+[lLfFdD]$/ := token || /^[0-9]+\.[0-9]+[fFdD]$/ := token) {
+        return "NUMBER_LITERAL<withTypeLiterals ? "(<token>)" : "">";
+    }
+    return "IDENTIFIER<withTypeLiterals ? "(<token>)" : "">";
+}
