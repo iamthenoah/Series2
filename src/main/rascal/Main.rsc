@@ -35,8 +35,6 @@ public int main(loc project) {
     // Type II detection with timing
     int type2Start = realTime();
     <clones, t2TotalLines> = detectTypeIIClone(project);
-    // DISCLAIMER: There seams to be a rascal type system issue here that gives an unsolvable type error.
-    // see CloneDetection::filterTypeIIClones for more details.
     list[CloneClass] type2 = filterTypeIIClones(clones);
     int type2Duration = realTime() - type2Start;
     printCloneReport("Type II", type2, t2TotalLines, type2Duration);
